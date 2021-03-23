@@ -1,9 +1,12 @@
-const router = require("express").Router();
+const router = require('express').Router();
 const { checkUsernameExists, validateRoleName } = require('./auth-middleware');
-const { JWT_SECRET } = require("../secrets"); // use this secret!
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { findBy, add } = require('../users/users-model');
+const { JWT_SECRET } = require('../secrets'); // use this secret!
 
-router.post("/register", validateRoleName, (req, res, next) => {
-  /**
+router.post('/register', validateRoleName, async (req, res, next) => {
+	/**
     [POST] /api/auth/register { "username": "anna", "password": "1234", "role_name": "angel" }
 
     response:
@@ -14,11 +17,25 @@ router.post("/register", validateRoleName, (req, res, next) => {
       "role_name": "angel"
     }
    */
+	try {
+		const { username, password, role_name } = req.body;
+		const user = await findBy({ username });
+		if (user) {
+			return res.status(409).json({ message: 'Username is taken' });
+		}
+		const newUser = await add({
+			username,
+			password: await bcrypt.hash(password, 10),
+			role_name,
+		});
+		res.status(201).json(newUser);
+	} catch (err) {
+		next(err);
+	}
 });
 
-
-router.post("/login", checkUsernameExists, (req, res, next) => {
-  /**
+router.post('/login', checkUsernameExists, async (req, res, next) => {
+	/**
     [POST] /api/auth/login { "username": "sue", "password": "1234" }
 
     response:
@@ -37,6 +54,39 @@ router.post("/login", checkUsernameExists, (req, res, next) => {
       "role_name": "admin" // the role of the authenticated user
     }
    */
+	try {
+		const { username, password } = req.body;
+		const user = await findBy({ username });
+		if (!user) {
+			return res
+				.status(401)
+				.json({
+					message:
+						'Username does not exist. Would you like to register instead?',
+				});
+		}
+		const validPassword = await bcrypt.compare(password, user.password);
+		if (!validPassword) {
+			return res
+				.status(401)
+				.json({ message: 'Incorrect password. Would you like to reset it?' });
+		}
+
+		// Create token
+		const token = jwt.sign(
+			{
+				subject: user.user_id,
+				username: user.username,
+				role_name: user.role_name,
+			},
+			JWT_SECRET
+		);
+
+		res.cookie('token', token);
+		res.json({ message: `Welcome ${user.username}` });
+	} catch (err) {
+		next(err);
+	}
 });
 
 module.exports = router;
